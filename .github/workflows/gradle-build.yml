@@ -41,32 +41,47 @@ jobs:
 
       - name: Download & extract project zip
         run: |
-          mkdir -p project
+          mkdir -p project_raw
           curl -L "${{ inputs.zip_url }}" -o project.zip
-          unzip -q project.zip -d project
-          # Jika zip berisi 1 folder pembungkus, masuk ke dalamnya otomatis
-          INNER=$(find project -mindepth 1 -maxdepth 1 -type d | head -n1)
-          if [ -f "$INNER/settings.gradle" ] || [ -f "$INNER/settings.gradle.kts" ]; then
-            mv "$INNER"/* project/ 2>/dev/null || true
+          unzip -q project.zip -d project_raw
+
+      - name: Cari folder root project (lokasi settings.gradle)
+        id: findroot
+        run: |
+          # Cari file settings.gradle / settings.gradle.kts di kedalaman berapa pun,
+          # lalu ambil folder tempat file itu berada sebagai root project asli.
+          SETTINGS_FILE=$(find project_raw -type f \( -name "settings.gradle" -o -name "settings.gradle.kts" \) | head -n1)
+
+          if [ -z "$SETTINGS_FILE" ]; then
+            echo "::error::Tidak ditemukan settings.gradle / settings.gradle.kts di dalam zip. Pastikan ini project Android Studio yang valid."
+            exit 1
           fi
 
+          PROJECT_ROOT=$(dirname "$SETTINGS_FILE")
+          echo "Root project ditemukan di: $PROJECT_ROOT"
+          echo "root=$PROJECT_ROOT" >> "$GITHUB_OUTPUT"
+
       - name: Grant execute permission for gradlew
-        run: chmod +x project/gradlew
+        run: chmod +x "${{ steps.findroot.outputs.root }}/gradlew"
 
       - name: Build APK (debug)
         if: inputs.build_type == 'debug'
-        working-directory: project
+        working-directory: ${{ steps.findroot.outputs.root }}
         run: ./gradlew assembleDebug --stacktrace
 
       - name: Build APK (release)
         if: inputs.build_type == 'release'
-        working-directory: project
+        working-directory: ${{ steps.findroot.outputs.root }}
         run: ./gradlew assembleRelease --stacktrace
 
       - name: Locate APK output
         id: locate
         run: |
-          APK_PATH=$(find project -type f -name "*.apk" | head -n1)
+          APK_PATH=$(find "${{ steps.findroot.outputs.root }}" -type f -name "*.apk" | head -n1)
+          if [ -z "$APK_PATH" ]; then
+            echo "::error::Build sukses tapi file APK tidak ditemukan."
+            exit 1
+          fi
           echo "apk_path=$APK_PATH" >> "$GITHUB_OUTPUT"
 
       - name: Upload APK artifact
