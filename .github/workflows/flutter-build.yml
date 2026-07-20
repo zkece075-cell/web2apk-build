@@ -27,32 +27,46 @@ jobs:
 
       - name: Download & extract project zip
         run: |
-          mkdir -p project
+          mkdir -p project_raw
           curl -L "${{ inputs.zip_url }}" -o project.zip
-          unzip -q project.zip -d project
-          INNER=$(find project -mindepth 1 -maxdepth 1 -type d | head -n1)
-          if [ -f "$INNER/pubspec.yaml" ]; then
-            mv "$INNER"/* project/ 2>/dev/null || true
+          unzip -q project.zip -d project_raw
+
+      - name: Cari folder root project (lokasi pubspec.yaml)
+        id: findroot
+        run: |
+          PUBSPEC_FILE=$(find project_raw -type f -name "pubspec.yaml" | head -n1)
+
+          if [ -z "$PUBSPEC_FILE" ]; then
+            echo "::error::Tidak ditemukan pubspec.yaml di dalam zip. Pastikan ini project Flutter yang valid."
+            exit 1
           fi
 
+          PROJECT_ROOT=$(dirname "$PUBSPEC_FILE")
+          echo "Root project ditemukan di: $PROJECT_ROOT"
+          echo "root=$PROJECT_ROOT" >> "$GITHUB_OUTPUT"
+
       - name: Get dependencies
-        working-directory: project
+        working-directory: ${{ steps.findroot.outputs.root }}
         run: flutter pub get
 
       - name: Build APK (debug)
         if: inputs.build_type == 'debug'
-        working-directory: project
+        working-directory: ${{ steps.findroot.outputs.root }}
         run: flutter build apk --debug
 
       - name: Build APK (release)
         if: inputs.build_type == 'release'
-        working-directory: project
+        working-directory: ${{ steps.findroot.outputs.root }}
         run: flutter build apk --release
 
       - name: Locate APK output
         id: locate
         run: |
-          APK_PATH=$(find project -type f -name "*.apk" | head -n1)
+          APK_PATH=$(find "${{ steps.findroot.outputs.root }}" -type f -name "*.apk" | head -n1)
+          if [ -z "$APK_PATH" ]; then
+            echo "::error::Build sukses tapi file APK tidak ditemukan."
+            exit 1
+          fi
           echo "apk_path=$APK_PATH" >> "$GITHUB_OUTPUT"
 
       - name: Upload APK artifact
